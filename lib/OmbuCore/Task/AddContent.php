@@ -8,7 +8,9 @@
 
 namespace OmbuCore\Task;
 
+use OmbuCore\Content\Wrapper;
 use OmbuCore\Content\WrapperException;
+use \Michelf\Markdown;
 
 class AddContent extends Task {
   /**
@@ -75,6 +77,8 @@ class AddContent extends Task {
         $this->buildMenu($menu, $nodes);
       }
     }
+    
+    $this->autoloadContent();
   }
 
   /**
@@ -214,6 +218,19 @@ class AddContent extends Task {
       throw new TaskException('Unable to find content file: ' . $path);
     }
 
+    switch (pathinfo($path, PATHINFO_EXTENSION)) {
+      case 'php':
+        $node = $this->loadNodeFromPHPFile($path);
+        break;
+      case 'md':
+        $node = $this->loadNodeFromMarkdownFile($path);
+        break;
+      default:
+        throw new TaskException("Content file " . $name . " is not a supported format. It should be either Markdown (.md) or PHP (.php).");
+    }
+    return $node;
+  }
+  protected function loadNodeFromPHPFile($path) {
     try {
       // Include content file. It should create a new \OmbuCore\Content\Wrapper
       // object.
@@ -239,5 +256,95 @@ class AddContent extends Task {
     catch (WrapperException $e) {
       throw new TaskException('Exception in content file ' . $name . ': ' . $e->getMessage());
     }
+  }
+  /**
+   * Load a node from Markdown file.
+   *
+   * @param string $name
+   *   The name of the Markdown file to include.
+   * @param string $node_type
+   *   The machine name of the node type for the content
+   *
+   * @return stdClass
+   *   The created node object.
+   */
+  protected function loadNodeFromMarkdownFile($path) {
+    try {
+      $content = $this->parseMarkdownContent(file_get_contents($path));
+      $node_type = isset($content['node_type']) ? $content['node_type'] : 'page';
+      unset($content['node_type']);
+      $wrapper = new Wrapper('node', array('type' => $node_type));
+
+      // Set up the node body
+      $wrapper->body = array(
+        'value' => $content['body'],
+        'format' => 'default',
+        'teaser' => isset($content['teaser']) ? $content['teaser'] : '',
+      );
+      unset($content['body']);
+      unset($content['teaser']);
+
+      // Set up all other fields
+      foreach ($content as $field => $value) {
+        $wrapper->{$field} = isset($value) ? $value : '';
+      }
+
+      $wrapper->save();
+      return $wrapper->value();
+    }
+    catch (WrapperException $e) {
+      throw new TaskException('Exception in content file ' . $name . ': ' . $e->getMessage());
+    }
+  }
+  /**
+   * Load all node content from Markdown or PHP files in initial-content/autoload folder.
+   *
+   * If there is no initial-content/autoload folder, then nothing happens here.
+   */
+  protected function autoloadContent() {
+    $autoload_path = drupal_get_path('profile', $this->profile) . "/initial-content/autoload/";
+
+    // Loop through all files in the autoload folder and try to
+    // create nodes from them.
+    if (is_dir($autoload_path)) {
+      $files = array_diff(scandir($autoload_path), array('..', '.'));
+      foreach ($files as $file) {
+        $this->loadNodeFromFile('autoload/' . $file);
+      }
+    }
+  }
+  /**
+   * Parse Markdown content into an array that can be used for node content
+   *
+   * @param string $markdown
+   *   The Markdown content to parse
+   *
+   * @return array
+   *   An array with each field as key and its content as the value.
+   *   Field titles get lowercased and spaces replaced with '_'
+   */
+  protected function parseMarkdownContent($markdown) {
+    // Split the markdown by headings with ===== underlining them.
+    $data = preg_split("/(?m)^([\w ]+)\n(?:=)+$/", $markdown, NULL, PREG_SPLIT_DELIM_CAPTURE|PREG_SPLIT_NO_EMPTY);
+
+    // The above preg_split outputs field titles and values as siblings in
+    // the array. Now we'll group them as field_title => value, by assuming
+    // that each even array item is the field_title and odd is the value.
+    $fields = [];
+    foreach ($data as $key => $value) {
+      // We work only on even-numbered keys (which should always be field titles)
+      if (!($key & 1)) {
+        $field_title = strtolower(str_replace(' ', '_', $value));
+        if ($field_title == 'body') {
+          //$data[$key+1] = Markdown::defaultTransform($data[$key+1]);
+        }
+        $fields[$field_title] = $data[$key+1];
+      }
+    }
+
+    // There's probably lots of room for errors in the above code.
+    // Instead of spending much time here, we should switch to migrate module.
+
+    return $fields;
   }
 }
