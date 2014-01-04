@@ -330,13 +330,14 @@ class AddContent extends Task {
     // The above preg_split outputs field titles and values as siblings in
     // the array. Now we'll group them as field_title => value, by assuming
     // that each even array item is the field_title and odd is the value.
+    module_load_include('php', 'ombucore', 'lib/parsedown/Parsedown');
     $fields = [];
     foreach ($data as $key => $value) {
       // We work only on even-numbered keys (which should always be field titles)
       if (!($key & 1)) {
         $field_title = strtolower(str_replace(' ', '_', $value));
         if ($field_title == 'body') {
-          //$data[$key+1] = Markdown::defaultTransform($data[$key+1]);
+          $data[$key+1] = Parsedown::instance()->parse($data[$key+1]);
         }
         $fields[$field_title] = $data[$key+1];
       }
